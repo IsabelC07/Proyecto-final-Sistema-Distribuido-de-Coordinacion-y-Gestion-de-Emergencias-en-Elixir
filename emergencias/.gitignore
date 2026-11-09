@@ -1,0 +1,6 @@
+/_build/
+/deps/
+/data/
+/data_test/
+erl_crash.dump
+/.elixir_ls/
