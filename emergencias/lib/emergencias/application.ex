@@ -16,7 +16,8 @@ defmodule Emergencias.Application do
   def start(_tipo, _argumentos) do
     hijos = [
       Bitacora,
-      UsuariosServer
+      UsuariosServer,
+      ZonasServer
     ]
 
     Supervisor.start_link(hijos, strategy: :one_for_one, name: Emergencias.Supervisor)

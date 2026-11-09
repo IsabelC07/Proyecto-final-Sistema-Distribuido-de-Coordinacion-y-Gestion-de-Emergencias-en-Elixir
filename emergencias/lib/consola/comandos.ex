@@ -16,7 +16,11 @@ defmodule Comandos do
     {"salir", "salir"},
     {"conectar", "conectar usuario clave [tipo zona \"Nombre completo\"]"},
     {"desconectar", "desconectar"},
-    {"crear_usuario", "crear_usuario usuario clave tipo zona \"Nombre completo\""}
+    {"crear_usuario", "crear_usuario usuario clave tipo zona \"Nombre completo\""},
+    {"registrar_zona", "registrar_zona codigo \"nombre\" critico|alto|medio|bajo afectados"},
+    {"registrar_sector", "registrar_sector zona codigo \"nombre\" critico|alto|medio|bajo afectados"},
+    {"registrar_punto", "registrar_punto sector codigo \"nombre\" critico|alto|medio|bajo afectados"},
+    {"listar_zonas", "listar_zonas"}
   ]
 
   @doc """
@@ -60,6 +64,28 @@ defmodule Comandos do
   #usuarios
   defp despachar("crear_usuario", [nuevo, clave, tipo, zona, nombre], _usuario),
     do: UsuariosServer.crear(nuevo, clave, nombre, tipo, zona)
+
+  #zonas
+  defp despachar("registrar_zona", [codigo, nombre, nivel, afectados], _usuario) do
+    if codigo_libre?(codigo) do
+      ZonasServer.registrar_zona(codigo, nombre, nivel, Parser.entero(afectados))
+    else
+      codigo_ocupado(codigo)
+    end
+  end
+
+  defp despachar("registrar_sector", [zona, codigo, nombre, nivel, afectados], _usuario),
+    do: registrar_hijo(zona, "sector", codigo, nombre, nivel, afectados)
+
+  defp despachar("registrar_punto", [sector, codigo, nombre, nivel, afectados], _usuario),
+    do: registrar_hijo(sector, "punto", codigo, nombre, nivel, afectados)
+
+  defp despachar("listar_zonas", [], _usuario) do
+    case ZonasServer.listar() do
+      [] -> {:ok, "todavia no se tiene ni una sola zona registrada. por tanto, tiene que usar registrar_zona para crear una"}
+      zonas -> {:ok, String.trim_trailing(Zona.describir_arbol(zonas, ""))}
+    end
+  end
 
   # este caso se esta usando cuando los argumentos no coinciden con ninguna version de despachar
   # de arriba. muestra como se deberia de escribir el cmando
@@ -126,4 +152,23 @@ defmodule Comandos do
       nil -> "escriba ayuda"
     end
   end
+
+  # esta funcion sirve para registrar un sector o un punto. Primero revisa que el código
+  # no esté actualmente en uso y, si esta libre, lo registra dentro del padre indicado.
+  defp registrar_hijo(padre, tipo, codigo, nombre, nivel, afectados) do
+    if codigo_libre?(codigo) do
+      ZonasServer.registrar_hijo(padre, tipo, codigo, nombre, nivel, Parser.entero(afectados))
+    else
+      codigo_ocupado(codigo)
+    end
+  end
+
+  # Revisa si el código es de una ubicación que existe. Una ubicación puede ser una zona,
+  # un sector o un punto de atención.
+  defp ubicacion_valida?(codigo), do: ZonasServer.existe?(codigo)
+
+  # Revisa si un código está libre, es decir, que ninguna zona, sector ni punto lo use
+  defp codigo_libre?(codigo), do: not ubicacion_valida?(codigo)
+
+  defp codigo_ocupado(codigo), do: {:error, "el codigo #{codigo} se encuentra ocupado, debe escojerse otro"}
 end

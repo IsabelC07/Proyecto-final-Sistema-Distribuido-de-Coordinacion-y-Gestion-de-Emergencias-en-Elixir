@@ -32,6 +32,40 @@ defmodule Persistencia do
     |> Map.new(fn u -> {u.usuario, u} end)
   end
 
+  # Zonas
+  # el arbol se esta guardando plano, cada linea indica el codigo de el padre
+
+  @doc "esta guardando el arbol de zonas en zonas.txt. cada linea indica el codigo de el padre"
+  def guardar_zonas(zonas) do
+    escribir("zonas.txt", "codigo|nombre|tipo|nivel|afectados|padre", aplanar(zonas, ""), fn {z, padre} ->
+      [z.codigo, z.nombre, z.tipo, z.nivel, z.afectados, padre]
+    end)
+  end
+
+
+
+  @doc "lee zonas txt y vuelve a armar el arbol de las zonas, los sectores y puntos"
+  def cargar_zonas do
+    leer("zonas.txt", fn [codigo, nombre, tipo, nivel, afectados, padre] ->
+      zona = %Zona{codigo: codigo, nombre: nombre, tipo: tipo, nivel: nivel, afectados: String.to_integer(afectados)}
+      {zona, padre}
+    end)
+    |> armar_arbol("")
+  end
+
+  # aqui teneemos algo recursivo, conveirte el arbol en una lista de {zona, codigo_del_padre}
+  defp aplanar([], _padre), do: []
+
+  defp aplanar([zona | resto], padre),
+    do: [{zona, padre}] ++ aplanar(zona.hijos, zona.codigo) ++ aplanar(resto, padre)
+
+  # otra recursividad, donde recontruye el arbol buscando los hijos de cada padre
+  defp armar_arbol(planas, padre) do
+    planas
+    |> Enum.filter(fn {_zona, codigo_padre} -> codigo_padre == padre end)
+    |> Enum.map(fn {zona, _codigo_padre} -> %{zona | hijos: armar_arbol(planas, zona.codigo)} end)
+  end
+
   # Actividad de usuarios
 
   @doc """
