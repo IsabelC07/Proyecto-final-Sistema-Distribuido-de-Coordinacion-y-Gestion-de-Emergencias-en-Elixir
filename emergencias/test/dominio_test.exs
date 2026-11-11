@@ -35,6 +35,27 @@ defmodule DominioTest do
   end
 
 
+  # Revisa que no se pueda sacar mas de lo que hay ni crear un recurso con cantidad negativa.
+  # revisa que no se pueda sacar de donde no hay y que no se creen recursos con cantidades negativas.
+  test "un recurso nunca queda con cantidades negativas" do
+    {:ok, r} = Recurso.crear("R1", "Agua", "agua", 50, "litros", "c1")
+    assert {:error, _} = Recurso.retirar(r, "c1", 51)
+
+    {:ok, r} = Recurso.retirar(r, "c1", 50)
+    assert Recurso.disponible(r, "c1") == 0
+    assert {:error, _} = Recurso.crear("R2", "Agua", "agua", -5, "litros", "c1")
+  end
+
+  # pasa 30 de 50 de un centro a otro y revisa que el original quede con 20, el destino debe de tener 30 y el total siue siendo de 50
+  test "transferir mueve unidades entre centros" do
+    {:ok, r} = Recurso.crear("R1", "Agua", "agua", 50, "litros", "c1")
+    {:ok, r} = Recurso.transferir(r, "c1", "A2", 30)
+
+    assert Recurso.disponible(r, "c1") == 20
+    assert Recurso.disponible(r, "A2") == 30
+    assert Recurso.total(r) == 50
+  end
+
   # esta revisa que cada tipo de usuario tenga los permisos que le corresponden y que nadie pueda registrarse por si mismo como coordinador.
   test "los permisos dependen del tipo de usuario" do
     assert Usuario.puede?("coordinador", "asignar_recurso")

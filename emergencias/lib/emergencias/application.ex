@@ -17,7 +17,8 @@ defmodule Emergencias.Application do
     hijos = [
       Bitacora,
       UsuariosServer,
-      ZonasServer
+      ZonasServer,
+      InventarioServer
     ]
 
     Supervisor.start_link(hijos, strategy: :one_for_one, name: Emergencias.Supervisor)

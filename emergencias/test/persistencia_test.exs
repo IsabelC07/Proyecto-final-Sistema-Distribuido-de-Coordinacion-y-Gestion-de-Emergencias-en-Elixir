@@ -9,4 +9,13 @@ defmodule PersistenciaTest do
 
     assert Persistencia.cargar_zonas() == ZonasServer.listar()
   end
+
+  # se registran 40 litros de agua en el acopio_p1, entonces tranfiere 15 litros al albergue_p1 y revisa que al leer salga 25 y 15
+  test "los recursos se recuperan con lo que hay en cada ubicacion" do
+    {:ok, _} = InventarioServer.registrar("RP1", "Agua", "agua", 40, "litros", "acopio1", "prueba")
+    {:ok, _} = InventarioServer.transferir("RP1", "acopio1", "albergue1", 15, "prueba")
+
+    recurso = Persistencia.cargar_recursos()["RP1"]
+    assert recurso.existencias == %{"acopio1" => 25, "albergue1" => 15}
+  end
 end

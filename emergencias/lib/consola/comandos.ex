@@ -20,7 +20,13 @@ defmodule Comandos do
     {"registrar_zona", "registrar_zona codigo \"nombre\" critico|alto|medio|bajo afectados"},
     {"registrar_sector", "registrar_sector zona codigo \"nombre\" critico|alto|medio|bajo afectados"},
     {"registrar_punto", "registrar_punto sector codigo \"nombre\" critico|alto|medio|bajo afectados"},
-    {"listar_zonas", "listar_zonas"}
+    {"listar_zonas", "listar_zonas"},
+    {"registrar_recurso", "registrar_recurso codigo \"nombre\" categoria cantidad unidad ubicacion"},
+    {"entrada_recurso", "entrada_recurso codigo ubicacion cantidad"},
+    {"salida_recurso", "salida_recurso codigo ubicacion cantidad"},
+    {"transferir_recurso", "transferir_recurso codigo origen destino cantidad"},
+    {"listar_recursos", "listar_recursos [categoria=.. zona=..]"},
+    {"movimientos", "movimientos codigo_recurso"}
   ]
 
   @doc """
@@ -85,6 +91,53 @@ defmodule Comandos do
       [] -> {:ok, "todavia no se tiene ni una sola zona registrada. por tanto, tiene que usar registrar_zona para crear una"}
       zonas -> {:ok, String.trim_trailing(Zona.describir_arbol(zonas, ""))}
     end
+  end
+
+  #recursos
+  defp despachar("registrar_recurso", [codigo, nombre, categoria, cantidad, unidad, ubicacion], usuario) do
+    if ubicacion_valida?(ubicacion) do
+      InventarioServer.registrar(codigo, nombre, categoria, Parser.entero(cantidad), unidad, ubicacion, usuario)
+    else
+      ubicacion_invalida(ubicacion)
+    end
+  end
+
+  defp despachar("entrada_recurso", [codigo, ubicacion, cantidad], usuario) do
+    if ubicacion_valida?(ubicacion) do
+      InventarioServer.entrada(codigo, ubicacion, Parser.entero(cantidad), usuario)
+    else
+      ubicacion_invalida(ubicacion)
+    end
+  end
+
+  defp despachar("salida_recurso", [codigo, ubicacion, cantidad], usuario),
+    do: InventarioServer.salida(codigo, ubicacion, Parser.entero(cantidad), usuario)
+
+  defp despachar("transferir_recurso", [codigo, origen, destino, cantidad], usuario) do
+    if ubicacion_valida?(destino) do
+      InventarioServer.transferir(codigo, origen, destino, Parser.entero(cantidad), usuario)
+    else
+      ubicacion_invalida(destino)
+    end
+  end
+
+  defp despachar("listar_recursos", palabras, _usuario) do
+    case preparar_filtros(palabras, %{"categoria" => :categoria, "zona" => :zona}) do
+      {:ok, filtros} ->
+        InventarioServer.listar()
+        |> Enum.filter(&cumple_categoria?(&1, filtros))
+        |> Enum.map(&existencias_en_zona(&1, filtros))
+        |> Enum.reject(&(map_size(&1.existencias) == 0))
+        |> listar_texto(&Recurso.describir/1, "no se poseen recursos con esos filtros")
+
+      error ->
+        error
+    end
+  end
+
+  defp despachar("movimientos", [codigo], _usuario) do
+    InventarioServer.movimientos(codigo)
+    |> listar_texto(&describir_movimiento/1, "no se tienen movimientos para el recurso #{codigo}")
   end
 
   # este caso se esta usando cuando los argumentos no coinciden con ninguna version de despachar
@@ -170,5 +223,66 @@ defmodule Comandos do
   # Revisa si un código está libre, es decir, que ninguna zona, sector ni punto lo use
   defp codigo_libre?(codigo), do: not ubicacion_valida?(codigo)
 
+  # Mensajes de error que se repiten en varios comandos
+  defp ubicacion_invalida(codigo), do: {:error, "no existe ninguna zona, sector o punto con el codigo #{codigo}"}
+
   defp codigo_ocupado(codigo), do: {:error, "el codigo #{codigo} se encuentra ocupado, debe escojerse otro"}
+
+  # Devuelve un MapSet con los códigos de la zona y de sus sectores y puntos
+  # (se recorre de forma recursiva).
+  defp ubicaciones_de(zona), do: MapSet.new(Zona.codigos(zona))
+
+  # Revisa los filtros con Parser.filtros y, si viene el filtro zona=X, lo cambia por el
+  # conjunto de ubicaciones que hay dentro de X.
+  defp preparar_filtros(palabras, permitidos) do
+    case Parser.filtros(palabras, permitidos) do
+      {:ok, filtros} -> convertir_zona(filtros)
+      error -> error
+    end
+  end
+
+  # Si hay un filtro de zona, busca esa zona y cambia su código por todas las ubicaciones
+  # que tiene adentro. Si la zona no existe devuelve el error.
+  defp convertir_zona(filtros) do
+    case List.keyfind(filtros, :zona, 0) do
+      nil ->
+        {:ok, filtros}
+
+      {:zona, codigo} ->
+        case ZonasServer.obtener(codigo) do
+          {:ok, zona} -> {:ok, List.keyreplace(filtros, :zona, 0, {:zona, ubicaciones_de(zona)})}
+          error -> error
+        end
+    end
+  end
+
+  # Devuelve true si no hay filtro de categoría o si el recurso es de esa categoría
+  defp cumple_categoria?(recurso, filtros) do
+    case List.keyfind(filtros, :categoria, 0) do
+      nil -> true
+      {:categoria, categoria} -> recurso.categoria == categoria
+    end
+  end
+
+  # Si hay filtro de zona, deja solo las existencias que están dentro de esa zona.
+  # Si no hay filtro, devuelve el recurso igual.
+  defp existencias_en_zona(recurso, filtros) do
+    case List.keyfind(filtros, :zona, 0) do
+      nil ->
+        recurso
+
+      {:zona, ubicaciones} ->
+        existencias = Map.filter(recurso.existencias, fn {ubicacion, _cantidad} -> MapSet.member?(ubicaciones, ubicacion) end)
+        %{recurso | existencias: existencias}
+    end
+  end
+
+  # Convierte cada elemento de la lista en una línea de texto usando la función describir.
+  # Si la lista está vacía devuelve mensaje_vacio.
+  defp listar_texto([], _describir, mensaje_vacio), do: {:ok, mensaje_vacio}
+  defp listar_texto(lista, describir, _mensaje_vacio), do: {:ok, Enum.map_join(lista, "\n", describir)}
+
+  # Arma una línea de texto con los datos de un movimiento del inventario, separados por |
+  defp describir_movimiento({fecha, codigo, tipo, ubicacion, cantidad, detalle}),
+    do: "#{fecha} | #{codigo} | #{tipo} | #{ubicacion} | #{cantidad} | #{detalle}"
 end

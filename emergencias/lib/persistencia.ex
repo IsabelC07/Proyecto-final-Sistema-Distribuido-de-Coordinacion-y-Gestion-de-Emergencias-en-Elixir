@@ -66,6 +66,65 @@ defmodule Persistencia do
     |> Enum.map(fn {zona, _codigo_padre} -> %{zona | hijos: armar_arbol(planas, zona.codigo)} end)
   end
 
+  # recursos
+  # recursos.txt esta guardando los datos de los recursos y existencias.txt cuanto hay en cada ubicacion.
+
+  @doc """
+  guarda los recursos en dos archivos distintos: recursos.txt (datos del recurso)
+  y existencias.txt (cuanto tiene  en cada ubicacion).
+  """
+  def guardar_recursos(recursos) do
+    lista = Map.values(recursos)
+
+    escribir("recursos.txt", "codigo|nombre|categoria|unidad", lista, fn r ->
+      [r.codigo, r.nombre, r.categoria, r.unidad]
+    end)
+
+    existencias = for r <- lista, {ubicacion, cantidad} <- r.existencias, do: [r.codigo, ubicacion, cantidad]
+    escribir("existencias.txt", "codigo|ubicacion|cantidad", existencias, fn campos -> campos end)
+  end
+
+  @doc "lee recursos.txt y existencias.txt, despues devuelve un mapa `%{codigo => %Recurso{}}`"
+  def cargar_recursos do
+    existencias =
+      leer("existencias.txt", fn [codigo, ubicacion, cantidad] ->
+        {codigo, ubicacion, String.to_integer(cantidad)}
+      end)
+
+    leer("recursos.txt", fn [codigo, nombre, categoria, unidad] ->
+      propias =
+        existencias
+        |> Enum.filter(fn {codigo_existencia, _ubicacion, _cantidad} -> codigo_existencia == codigo end)
+        |> Map.new(fn {_codigo, ubicacion, cantidad} -> {ubicacion, cantidad} end)
+
+      %Recurso{codigo: codigo, nombre: nombre, categoria: categoria, unidad: unidad, existencias: propias}
+    end)
+    |> Map.new(fn r -> {r.codigo, r} end)
+  end
+
+  @doc """
+  agrega un movimiento al final de movimiento.txt
+  el movimiento viene siendo una tupla `{fecha, codigo, tipo, ubicacion, cantidad, detalle}`
+  """
+  def agregar_movimiento({fecha, codigo, tipo, ubicacion, cantidad, detalle}) do
+    agregar("movimientos.txt", "fecha|codigo|tipo|ubicacion|cantidad|detalle", [
+      fecha,
+      codigo,
+      tipo,
+      ubicacion,
+      cantidad,
+      detalle
+    ])
+  end
+
+  @doc "Lee movimientos.txt y devuelve la lista de movimientos en el orden en que ocurrieron.
+  lee movimientos.txt y devuelve la lista de movimientos en el orden en que ocurrieron, ordenadamente"
+  def cargar_movimientos do
+    leer("movimientos.txt", fn [fecha, codigo, tipo, ubicacion, cantidad, detalle] ->
+      {fecha, codigo, tipo, ubicacion, String.to_integer(cantidad), detalle}
+    end)
+  end
+
   # Actividad de usuarios
 
   @doc """
