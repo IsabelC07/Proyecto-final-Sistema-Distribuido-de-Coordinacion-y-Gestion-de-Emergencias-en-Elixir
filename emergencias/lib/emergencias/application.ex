@@ -18,7 +18,8 @@ defmodule Emergencias.Application do
       Bitacora,
       UsuariosServer,
       ZonasServer,
-      InventarioServer
+      InventarioServer,
+      NecesidadesServer
     ]
 
     Supervisor.start_link(hijos, strategy: :one_for_one, name: Emergencias.Supervisor)

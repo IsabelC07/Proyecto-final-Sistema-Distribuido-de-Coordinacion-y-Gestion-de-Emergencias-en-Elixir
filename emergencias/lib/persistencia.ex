@@ -66,6 +66,37 @@ defmodule Persistencia do
     |> Enum.map(fn {zona, _codigo_padre} -> %{zona | hijos: armar_arbol(planas, zona.codigo)} end)
   end
 
+  # necesidades
+
+  @doc "esta encargada de guardar toda las necedades en necesidades.txt y remplaza si ya se teneia uno"
+  def guardar_necesidades(necesidades) do
+    titulos = "id|tipo|cantidad|prioridad|zona|descripcion|responsable|estado|recurso|fecha"
+
+    escribir("necesidades.txt", titulos, Map.values(necesidades), fn n ->
+      [n.id, n.tipo, n.cantidad, n.prioridad, n.zona, n.descripcion, n.responsable, n.estado, n.recurso, n.fecha]
+    end)
+  end
+
+  @doc "lee necesidades.txt y devuelve el mapa= `%{id => %Necesidad{}}`"
+  def cargar_necesidades do
+    leer("necesidades.txt", fn [id, tipo, cantidad, prioridad, zona, descripcion, responsable, estado, recurso, fecha] ->
+      %Necesidad{
+        id: id,
+        tipo: tipo,
+        cantidad: String.to_integer(cantidad),
+        prioridad: prioridad,
+        zona: zona,
+        descripcion: descripcion,
+        responsable: responsable,
+        estado: estado,
+        recurso: recurso,
+        fecha: fecha
+      }
+    end)
+    |> Map.new(fn n -> {n.id, n} end)
+  end
+
+
   # recursos
   # recursos.txt esta guardando los datos de los recursos y existencias.txt cuanto hay en cada ubicacion.
 

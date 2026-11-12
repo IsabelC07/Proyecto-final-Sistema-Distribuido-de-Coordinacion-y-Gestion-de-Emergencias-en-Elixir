@@ -18,4 +18,16 @@ defmodule PersistenciaTest do
     recurso = Persistencia.cargar_recursos()["RP1"]
     assert recurso.existencias == %{"acopio1" => 25, "albergue1" => 15}
   end
+
+  # Ssii una descripcion trae el separador "|", se guarda como "/" porque prevee que no dañe las columnas del archivo.
+  test "un texto con el separador no dana el archivo" do
+    {:ok, _} = NecesidadesServer.registrar("agua", 5, "baja", "zona2", "texto | con barra", "prueba")
+
+    necesidad =
+      Persistencia.cargar_necesidades()
+      |> Map.values()
+      |> Enum.find(&(&1.zona == "zona2"))
+
+    assert necesidad.descripcion == "texto / con barra"
+  end
 end

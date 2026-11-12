@@ -35,6 +35,28 @@ defmodule DominioTest do
   end
 
 
+  # revisa que las necesidades queden de forma ordenada de la mas urgente a la menos urgente.
+  test "las necesidades se ordenan por prioridad" do
+    {:ok, n1} = Necesidad.crear("N001", "agua", 10, "baja", "z", "d", "u")
+    {:ok, n2} = Necesidad.crear("N002", "agua", 10, "critica", "z", "d", "u")
+    {:ok, n3} = Necesidad.crear("N003", "agua", 10, "media", "z", "d", "u")
+
+    ordenadas = Necesidad.ordenar_por_prioridad([n1, n2, n3])
+    assert Enum.map(ordenadas, & &1.id) == ["N002", "N003", "N001"]
+  end
+
+
+  # hace el proceso de llevar una necesidad desde creada hasta atendida y revisa que despues ya no pueda cambiar de estado.
+  test "una necesidad atendida no se cierra dos veces ni vuelve a recibir recursos" do
+    {:ok, n} = Necesidad.crear("N001", "agua", 10, "alta", "z", "d", "u")
+    {:ok, n} = Necesidad.cambiar_estado(n, "asignada")
+    {:ok, n} = Necesidad.cambiar_estado(n, "en_atencion")
+    {:ok, n} = Necesidad.cambiar_estado(n, "atendida")
+
+    assert {:error, _} = Necesidad.cambiar_estado(n, "atendida")
+    assert {:error, _} = Necesidad.cambiar_estado(n, "asignada")
+  end
+
   # Revisa que no se pueda sacar mas de lo que hay ni crear un recurso con cantidad negativa.
   # revisa que no se pueda sacar de donde no hay y que no se creen recursos con cantidades negativas.
   test "un recurso nunca queda con cantidades negativas" do

@@ -21,12 +21,19 @@ defmodule Comandos do
     {"registrar_sector", "registrar_sector zona codigo \"nombre\" critico|alto|medio|bajo afectados"},
     {"registrar_punto", "registrar_punto sector codigo \"nombre\" critico|alto|medio|bajo afectados"},
     {"listar_zonas", "listar_zonas"},
+    {"registrar_necesidad", "registrar_necesidad tipo cantidad critica|alta|media|baja zona \"descripcion\""},
+    {"listar_necesidades", "listar_necesidades [zona=.. tipo=.. prioridad=.. estado=..]"},
+    {"necesidades_pendientes", "necesidades_pendientes"},
+    {"asignar_recurso", "asignar_recurso id_necesidad codigo_recurso ubicacion"},
+    {"actualizar_necesidad", "actualizar_necesidad id_necesidad en_atencion|atendida|cancelada"},
     {"registrar_recurso", "registrar_recurso codigo \"nombre\" categoria cantidad unidad ubicacion"},
     {"entrada_recurso", "entrada_recurso codigo ubicacion cantidad"},
     {"salida_recurso", "salida_recurso codigo ubicacion cantidad"},
     {"transferir_recurso", "transferir_recurso codigo origen destino cantidad"},
     {"listar_recursos", "listar_recursos [categoria=.. zona=..]"},
-    {"movimientos", "movimientos codigo_recurso"}
+    {"movimientos", "movimientos codigo_recurso"},
+    {"recursos_criticos", "recursos_criticos"},
+    {"simular_asignacion", "simular_asignacion codigo_recurso ubicacion id_necesidad1 id_necesidad2 ..."}
   ]
 
   @doc """
@@ -93,6 +100,45 @@ defmodule Comandos do
     end
   end
 
+  #necesidades
+  defp despachar("registrar_necesidad", [tipo, cantidad, prioridad, zona, descripcion], usuario) do
+    if ubicacion_valida?(zona) do
+      NecesidadesServer.registrar(tipo, Parser.entero(cantidad), prioridad, zona, descripcion, usuario)
+    else
+      ubicacion_invalida(zona)
+    end
+  end
+
+  # lista todas las necesidades que cumplan los filtros escritos (zona, tipo, prioridad o estado).
+  # la prioridad se usa para ordenar: primero salen las criticas.
+  defp despachar("listar_necesidades", palabras, _usuario) do
+    permitidos = %{"zona" => :zona, "tipo" => :tipo, "prioridad" => :prioridad, "estado" => :estado}
+
+    case preparar_filtros(palabras, permitidos) do
+      {:ok, filtros} ->
+        NecesidadesServer.listar()
+        |> Enum.filter(&cumple?(&1, filtros))
+        |> Necesidad.ordenar_por_prioridad()
+        |> listar_texto(&Necesidad.describir/1, "no necesita cumplir esos requisitos")
+
+      error ->
+        error
+    end
+  end
+
+  defp despachar("necesidades_pendientes", [], _usuario) do
+    NecesidadesServer.listar()
+    |> Enum.filter(&(&1.estado == "pendiente"))
+    |> Necesidad.ordenar_por_prioridad()
+    |> listar_texto(&Necesidad.describir/1, "no se tienen necesidades pendientes")
+  end
+
+  defp despachar("asignar_recurso", [id, codigo, ubicacion], _usuario),
+    do: NecesidadesServer.asignar(id, codigo, ubicacion)
+
+  defp despachar("actualizar_necesidad", [id, estado], _usuario),
+    do: NecesidadesServer.actualizar(id, estado)
+
   #recursos
   defp despachar("registrar_recurso", [codigo, nombre, categoria, cantidad, unidad, ubicacion], usuario) do
     if ubicacion_valida?(ubicacion) do
@@ -138,6 +184,22 @@ defmodule Comandos do
   defp despachar("movimientos", [codigo], _usuario) do
     InventarioServer.movimientos(codigo)
     |> listar_texto(&describir_movimiento/1, "no se tienen movimientos para el recurso #{codigo}")
+  end
+
+  defp despachar("recursos_criticos", [], _usuario), do: {:ok, recursos_criticos()}
+
+  # crea una tarea (Task) por cada necesidad y las ejecuta todas al mismo tiempo
+  # sobre el mismo recurso, para ver que pasa cuando varias piden al mismo tiempo.
+  defp despachar("simular_asignacion", [codigo, ubicacion | ids], _usuario) when ids != [] do
+    resultados =
+      ids
+      |> Enum.map(fn id -> Task.async(fn -> {id, NecesidadesServer.asignar(id, codigo, ubicacion)} end) end)
+      |> Enum.map(&Task.await/1)
+
+    lineas =
+      Enum.map_join(resultados, "\n", fn {id, {resultado, texto}} -> "  #{id} -> #{resultado_simulacion(resultado)}: #{texto}" end)
+
+    {:ok, "se enviaron #{length(ids)} solicitudes a la vez por #{codigo} en #{ubicacion}. aqui esta el resultado de cada una:\n" <> lineas}
   end
 
   # este caso se esta usando cuando los argumentos no coinciden con ninguna version de despachar
@@ -256,6 +318,16 @@ defmodule Comandos do
     end
   end
 
+  # Devuelve true si el elemento cumple todos los filtros. El nombre se busca sin
+  # importar si está en mayúsculas o minúsculas.
+  defp cumple?(elemento, filtros) do
+    Enum.all?(filtros, fn
+      {:zona, ubicaciones} -> MapSet.member?(ubicaciones, elemento.zona)
+      {:nombre, texto} -> String.contains?(String.downcase(elemento.nombre), String.downcase(texto))
+      {campo, valor} -> Map.get(elemento, campo) == valor
+    end)
+  end
+
   # Devuelve true si no hay filtro de categoría o si el recurso es de esa categoría
   defp cumple_categoria?(recurso, filtros) do
     case List.keyfind(filtros, :categoria, 0) do
@@ -282,7 +354,37 @@ defmodule Comandos do
   defp listar_texto([], _describir, mensaje_vacio), do: {:ok, mensaje_vacio}
   defp listar_texto(lista, describir, _mensaje_vacio), do: {:ok, Enum.map_join(lista, "\n", describir)}
 
+  # Cambia el resultado de cada solicitud de la simulación por una palabra fácil de leer
+  defp resultado_simulacion(:ok), do: "se asigno"
+  defp resultado_simulacion(:error), do: "no se pudo asignar"
+
   # Arma una línea de texto con los datos de un movimiento del inventario, separados por |
   defp describir_movimiento({fecha, codigo, tipo, ubicacion, cantidad, detalle}),
     do: "#{fecha} | #{codigo} | #{tipo} | #{ubicacion} | #{cantidad} | #{detalle}"
+
+  # Un recurso es crítico cuando lo que hay en el inventario no alcanza para las necesidades
+  # pendientes de ese tipo. Suma lo disponible por categoría, suma lo que se necesita por
+  # tipo y compara los dos valores.
+  defp recursos_criticos do
+    disponible =
+      InventarioServer.listar()
+      |> Enum.group_by(& &1.categoria, &Recurso.total/1)
+      |> Map.new(fn {categoria, totales} -> {categoria, Enum.sum(totales)} end)
+
+    criticos =
+      NecesidadesServer.listar()
+      |> Enum.filter(&(&1.estado == "pendiente"))
+      |> Enum.group_by(& &1.tipo, & &1.cantidad)
+      |> Enum.map(fn {tipo, cantidades} -> {tipo, Enum.sum(cantidades), Map.get(disponible, tipo, 0)} end)
+      |> Enum.filter(fn {_tipo, requerido, hay} -> hay < requerido end)
+
+    case criticos do
+      [] ->
+        "de momento, los recursos son suficientes para las necesidades pendientes"
+
+      _ ->
+        "los recursos no alcanzan para estas necesidades  que tenemos pendientes:\n" <>
+          Enum.map_join(criticos, "\n", fn {tipo, requerido, hay} -> "  #{tipo}: se necesitan #{requerido} y solo tenemos #{hay}" end)
+    end
+  end
 end
