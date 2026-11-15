@@ -21,6 +21,7 @@ defmodule Comandos do
     {"registrar_sector", "registrar_sector zona codigo \"nombre\" critico|alto|medio|bajo afectados"},
     {"registrar_punto", "registrar_punto sector codigo \"nombre\" critico|alto|medio|bajo afectados"},
     {"listar_zonas", "listar_zonas"},
+    {"estado_zona", "estado_zona codigo"},
     {"registrar_necesidad", "registrar_necesidad tipo cantidad critica|alta|media|baja zona \"descripcion\""},
     {"listar_necesidades", "listar_necesidades [zona=.. tipo=.. prioridad=.. estado=..]"},
     {"necesidades_pendientes", "necesidades_pendientes"},
@@ -39,11 +40,17 @@ defmodule Comandos do
     {"enviar_mensaje", "enviar_mensaje documento \"mensaje\""},
     {"listar_mensajes", "listar_mensajes documento"},
     {"marcar_mensaje", "marcar_mensaje id_mensaje entregado|pendiente"},
+    {"reportar_mascota",
+     "reportar_mascota perdida|encontrada especie nombre color pequena|mediana|grande zona contacto [\"caracteristicas\"]"},
+    {"listar_mascotas", "listar_mascotas [tipo=.. especie=.. zona=.. estado=..]"},
+    {"buscar_coincidencias", "buscar_coincidencias"},
+    {"confirmar_coincidencia", "confirmar_coincidencia id_perdida id_encontrada"},
     {"registrar_albergue", "registrar_albergue codigo \"nombre\" zona capacidad"},
     {"consultar_albergue", "consultar_albergue codigo"},
     {"registrar_ingreso", "registrar_ingreso codigo_albergue documento"},
     {"registrar_salida", "registrar_salida codigo_albergue documento trasladada|reunificada"},
     {"reporte_albergues", "reporte_albergues"},
+    {"resumen", "resumen"},
     {"recursos_criticos", "recursos_criticos"},
     {"simular_asignacion", "simular_asignacion codigo_recurso ubicacion id_necesidad1 id_necesidad2 ..."}
   ]
@@ -109,6 +116,13 @@ defmodule Comandos do
     case ZonasServer.listar() do
       [] -> {:ok, "todavia no se tiene ni una sola zona registrada. por tanto, tiene que usar registrar_zona para crear una"}
       zonas -> {:ok, String.trim_trailing(Zona.describir_arbol(zonas, ""))}
+    end
+  end
+
+  defp despachar("estado_zona", [codigo], _usuario) do
+    case ZonasServer.obtener(codigo) do
+      {:ok, zona} -> {:ok, estado_zona(zona)}
+      error -> error
     end
   end
 
@@ -249,6 +263,50 @@ defmodule Comandos do
   defp despachar("marcar_mensaje", [id, estado], _usuario),
     do: FamiliasServer.marcar_mensaje(id, estado)
 
+  #mascotas
+  defp despachar("reportar_mascota", [tipo, especie, nombre, color, tamano, zona, contacto], usuario),
+    do: despachar("reportar_mascota", [tipo, especie, nombre, color, tamano, zona, contacto, ""], usuario)
+
+  defp despachar("reportar_mascota", [tipo, especie, nombre, color, tamano, zona, contacto, caracteristicas], _usuario) do
+    if ZonasServer.existe?(zona) do
+      MascotasServer.reportar(tipo, especie, nombre, color, tamano, zona, contacto, caracteristicas)
+    else
+      ubicacion_invalida(zona)
+    end
+  end
+
+  defp despachar("listar_mascotas", palabras, _usuario) do
+    permitidos = %{"tipo" => :tipo, "especie" => :especie, "zona" => :zona, "estado" => :estado}
+
+    case preparar_filtros(palabras, permitidos) do
+      {:ok, filtros} ->
+        MascotasServer.listar()
+        |> Enum.filter(&cumple?(&1, filtros))
+        |> listar_texto(&Mascota.describir/1, "no hay mascotas reportadas con ese filtro")
+
+      error ->
+        error
+    end
+  end
+
+  defp despachar("buscar_coincidencias", [], _usuario) do
+    case MascotasServer.buscar_coincidencias() do
+      [] ->
+        {:ok, "de momento, no se tienen mascotas perdidas que se parescan a las encontradas"}
+
+      pares ->
+        lineas =
+          Enum.map_join(pares, "\n", fn {perdida, encontrada, puntaje} ->
+            "  la mascota perdida #{perdida} se parece a la que se encontro #{encontrada} (#{puntaje} puntos)"
+          end)
+
+        {:ok, "estas mascotas se parecen entre si (con un puntaje sobre 100):\n" <> lineas}
+    end
+  end
+
+  defp despachar("confirmar_coincidencia", [perdida, encontrada], _usuario),
+    do: MascotasServer.confirmar(perdida, encontrada)
+
   #albergues
   defp despachar("registrar_albergue", [codigo, nombre, zona, capacidad], _usuario) do
     cond do
@@ -277,6 +335,9 @@ defmodule Comandos do
     |> Enum.sort_by(&Albergue.porcentaje/1, :desc)
     |> listar_texto(&Albergue.describir/1, "no se tienen albergues registrados de momento")
   end
+
+  #reportes
+  defp despachar("resumen", [], _usuario), do: {:ok, resumen()}
 
   defp despachar("recursos_criticos", [], _usuario), do: {:ok, recursos_criticos()}
 
@@ -454,6 +515,10 @@ defmodule Comandos do
   defp resultado_simulacion(:ok), do: "se asigno"
   defp resultado_simulacion(:error), do: "no se pudo asignar"
 
+  # Le agrega el artículo al tipo: "la zona", "el sector" o "el punto"
+  defp con_articulo("zona"), do: "la zona"
+  defp con_articulo(tipo), do: "el " <> tipo
+
   # Une los elementos de la lista separados por comas. Si la lista está vacía
   # devuelve "nada por ahora".
   defp lista_o_ninguno([]), do: "nada por ahora"
@@ -462,6 +527,33 @@ defmodule Comandos do
   # Arma una línea de texto con los datos de un movimiento del inventario, separados por |
   defp describir_movimiento({fecha, codigo, tipo, ubicacion, cantidad, detalle}),
     do: "#{fecha} | #{codigo} | #{tipo} | #{ubicacion} | #{cantidad} | #{detalle}"
+
+  # Arma el reporte de una zona. Cuenta los afectados, sectores, puntos, albergues,
+  # necesidades pendientes, personas, mascotas y recursos que hay dentro de ella.
+  defp estado_zona(zona) do
+    datos = Zona.estadisticas(zona)
+    ubicaciones = ubicaciones_de(zona)
+    en_zona = fn lista -> Enum.filter(lista, &MapSet.member?(ubicaciones, &1.zona)) end
+
+    pendientes = NecesidadesServer.listar() |> en_zona.() |> Enum.count(&(&1.estado == "pendiente"))
+    albergues = AlberguesServer.listar() |> Enum.filter(&MapSet.member?(ubicaciones, &1.codigo)) |> length()
+    personas = FamiliasServer.listar_personas() |> en_zona.() |> length()
+    mascotas = MascotasServer.listar() |> en_zona.() |> Enum.count(&(&1.estado != "resuelta"))
+
+    recursos =
+      for recurso <- InventarioServer.listar(),
+          {ubicacion, cantidad} <- recurso.existencias,
+          MapSet.member?(ubicaciones, ubicacion),
+          do: "#{recurso.codigo} en #{ubicacion}: #{cantidad} #{recurso.unidad}"
+
+    "estado actual en #{con_articulo(zona.tipo)} #{zona.codigo} - #{zona.nombre} (su nivel: #{zona.nivel})\n" <>
+      "nivel más alto que hay adentro: #{datos.nivel_maximo}\n" <>
+      "total de afectados (contando sectores y puntos): #{datos.afectados}\n" <>
+      "tiene #{datos.sectores} sectores y #{datos.puntos} puntos de atención\n" <>
+      "albergues: #{albergues} | Necesidades pendientes: #{pendientes}\n" <>
+      "personas reportadas: #{personas} | Mascotas sin resolver: #{mascotas}\n" <>
+      "recursos disponibles: #{lista_o_ninguno(recursos)}"
+  end
 
   # Arma el reporte de un albergue con su ocupación, las personas que están adentro,
   # sus necesidades y los recursos que tiene guardados.
@@ -477,6 +569,35 @@ defmodule Comandos do
       "\npersonas adentro: #{lista_o_ninguno(Enum.to_list(albergue.personas))}" <>
       "\nnecesidades: #{lista_o_ninguno(necesidades)}" <>
       "\nrecursos guardados: #{lista_o_ninguno(recursos)}"
+  end
+
+  # arma el reporte general del sistema: los recursos que quedan y cuántos elementos
+  # hay en cada estado.
+  defp resumen do
+    recursos =
+      for r <- InventarioServer.listar(), do: "  #{r.codigo} #{r.nombre}: #{Recurso.total(r)} #{r.unidad}"
+
+    albergues = AlberguesServer.listar()
+    ocupados = albergues |> Enum.map(&Albergue.ocupacion/1) |> Enum.sum()
+    capacidad = albergues |> Enum.map(& &1.capacidad) |> Enum.sum()
+
+    "resumen en general\n" <>
+      "recursos que quedan en el inventario:\n" <>
+      if(recursos == [], do: "  nada de momento", else: Enum.join(recursos, "\n")) <>
+      "\nnecesidades: #{contar_estados(NecesidadesServer.listar())}" <>
+      "\npersonas: #{contar_estados(FamiliasServer.listar_personas())}" <>
+      "\nmensajes: #{contar_estados(FamiliasServer.listar_mensajes())}" <>
+      "\nmascotas: #{contar_estados(MascotasServer.listar())}" <>
+      "\nalbergues: #{length(albergues)}, con #{ocupados} de #{capacidad} cupos ocupados en este momento"
+  end
+
+  # Cuenta cuántos elementos hay en cada estado. Por ejemplo devuelve "pendiente: 3, atendida: 1"
+  defp contar_estados([]), do: "nada por ahora"
+
+  defp contar_estados(lista) do
+    lista
+    |> Enum.frequencies_by(& &1.estado)
+    |> Enum.map_join(", ", fn {estado, cantidad} -> "#{estado}: #{cantidad}" end)
   end
 
   # Un recurso es crítico cuando lo que hay en el inventario no alcanza para las necesidades

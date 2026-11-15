@@ -213,6 +213,38 @@ defmodule Persistencia do
     |> Map.new(fn m -> {m.id, m} end)
   end
 
+  # mascotas
+
+  @doc "guarda todos los reportes de mascotas en la mascota.txt (esto remplaza el archivo)"
+  def guardar_mascotas(mascotas) do
+    titulos = "id|tipo|especie|nombre|color|tamano|zona|contacto|estado|coincidencia|caracteristicas"
+
+    escribir("mascotas.txt", titulos, Map.values(mascotas), fn m ->
+      [m.id, m.tipo, m.especie, m.nombre, m.color, m.tamano, m.zona, m.contacto, m.estado, m.coincidencia, m.caracteristicas]
+    end)
+  end
+
+
+  @doc "lee mascotas.txt y devuelve un mapa `%{id => %Mascota{}}`."
+  def cargar_mascotas do
+    leer("mascotas.txt", fn [id, tipo, especie, nombre, color, tamano, zona, contacto, estado, coincidencia, caracteristicas] ->
+      %Mascota{
+        id: id,
+        tipo: tipo,
+        especie: especie,
+        nombre: nombre,
+        color: color,
+        tamano: tamano,
+        zona: zona,
+        contacto: contacto,
+        estado: estado,
+        coincidencia: coincidencia,
+        caracteristicas: caracteristicas
+      }
+    end)
+    |> Map.new(fn m -> {m.id, m} end)
+  end
+
   # albergues
   #los documentos de las personas dentro de los albergues se estarian guardando de forma separada.
 

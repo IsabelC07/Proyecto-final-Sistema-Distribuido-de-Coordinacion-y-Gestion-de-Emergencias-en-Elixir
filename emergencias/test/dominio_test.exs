@@ -99,6 +99,20 @@ defmodule DominioTest do
   end
 
 
+  # compara una mascota perdida con una que esta encontrada y otra que es de otra especie, revisa el puntaje
+  # y que solo la que es de la misma especie pueda concidir
+  test "las mascotas se comparan con un puntaje" do
+    {:ok, perdida} = Mascota.crear("MA001", "perdida", "perro", "Luna", "negra", "mediana", "norte", "300", "collar rojo")
+    {:ok, encontrada} = Mascota.crear("MA002", "encontrada", "perro", "", "negra", "mediana", "norte", "301", "collar rojo")
+    {:ok, gato} = Mascota.crear("MA003", "encontrada", "gato", "", "negra", "mediana", "norte", "302", "")
+
+    # zona 30 + color 25 + tamano 20 + nombre 0 (desconocido) + caracteristicas 10
+    assert Mascota.puntaje(perdida, encontrada) == 85
+    assert Mascota.puntaje(perdida, gato) == 0
+    assert Mascota.coincidencias([perdida], [encontrada, gato]) == [{"MA001", "MA002", 85}]
+  end
+
+
   # esta revisa que cada tipo de usuario tenga los permisos que le corresponden y que nadie pueda registrarse por si mismo como coordinador.
   test "los permisos dependen del tipo de usuario" do
     assert Usuario.puede?("coordinador", "asignar_recurso")

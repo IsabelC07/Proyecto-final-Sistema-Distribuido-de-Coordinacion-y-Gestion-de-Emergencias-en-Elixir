@@ -21,7 +21,8 @@ defmodule Emergencias.Application do
       InventarioServer,
       NecesidadesServer,
       FamiliasServer,
-      AlberguesServer
+      AlberguesServer,
+      MascotasServer
     ]
 
     Supervisor.start_link(hijos, strategy: :one_for_one, name: Emergencias.Supervisor)
