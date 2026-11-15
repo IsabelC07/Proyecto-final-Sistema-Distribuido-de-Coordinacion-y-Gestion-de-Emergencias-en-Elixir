@@ -78,6 +78,27 @@ defmodule DominioTest do
     assert Recurso.total(r) == 50
   end
 
+  # albergue con capacidad de 1 recibe una persona y estaria rechazando a la segunda, ya que no tiene mas cupo
+
+  test "un albergue no supera su capacidad" do
+    {:ok, a} = Albergue.crear("A1", "Albergue", "z", 1)
+    {:ok, a} = Albergue.ingresar(a, "doc1")
+    assert {:error, _} = Albergue.ingresar(a, "doc2")
+  end
+
+
+  # este revisa que una persona solo pueda cambiar a estados permitidos y que cada cambio quede registrado en el historial de la persona.
+  test "una persona solo sigue transiciones validas" do
+    {:ok, p} = Persona.crear("P001", "123", "Samuel Marin", 30, "norte", "localizada")
+
+    assert {:error, _} = Persona.cambiar_estado(p, "reportada", true)
+    assert {:error, _} = Persona.cambiar_estado(p, "en_albergue", true)
+
+    {:ok, p} = Persona.cambiar_estado(p, "reunificada", true)
+    assert length(p.historial) == 2
+  end
+
+
   # esta revisa que cada tipo de usuario tenga los permisos que le corresponden y que nadie pueda registrarse por si mismo como coordinador.
   test "los permisos dependen del tipo de usuario" do
     assert Usuario.puede?("coordinador", "asignar_recurso")

@@ -156,6 +156,87 @@ defmodule Persistencia do
     end)
   end
 
+  # personas y mensajes
+
+  @doc "esta guarda todas las personas en personas.txt (sin el historial, que va en otro archivo distinto)"
+  def guardar_personas(personas) do
+    escribir("personas.txt", "id|documento|nombre|edad|zona|estado", Map.values(personas), fn p ->
+      [p.id, p.documento, p.nombre, p.edad, p.zona, p.estado]
+    end)
+  end
+
+  @doc "agrega el cambio actual de estado de una persona al final de historial_personas.txt"
+  def agregar_cambio_persona(documento, {fecha, anterior, nuevo}) do
+    agregar("historial_personas.txt", "documento|fecha|anterior|nuevo", [documento, fecha, anterior, nuevo])
+  end
+
+  @doc """
+  lee persona.txt y historial_persona.txt, luego devulve un mapa de forma`%{documento => %Persona{}}` con el historial de la persona
+  """
+  def cargar_personas do
+    historial =
+      leer("historial_personas.txt", fn [documento, fecha, anterior, nuevo] ->
+        {documento, {fecha, anterior, nuevo}}
+      end)
+
+    leer("personas.txt", fn [id, documento, nombre, edad, zona, estado] ->
+      cambios =
+        historial
+        |> Enum.filter(fn {documento_cambio, _cambio} -> documento_cambio == documento end)
+        |> Enum.map(fn {_documento, cambio} -> cambio end)
+
+      %Persona{
+        id: id,
+        documento: documento,
+        nombre: nombre,
+        edad: String.to_integer(edad),
+        zona: zona,
+        estado: estado,
+        historial: cambios
+      }
+    end)
+    |> Map.new(fn p -> {p.documento, p} end)
+  end
+
+  @doc "guarda los mensajes en el archivo mensajes.txt (remplaza el archivo)"
+  def guardar_mensajes(mensajes) do
+    escribir("mensajes.txt", "id|fecha|remitente|destinatario|contenido|estado", Map.values(mensajes), fn m ->
+      [m.id, m.fecha, m.remitente, m.destinatario, m.contenido, m.estado]
+    end)
+  end
+
+  @doc "Lee mensajes.txt y devuelve un mapa `%{id => %Mensaje{}}`."
+  def cargar_mensajes do
+    leer("mensajes.txt", fn [id, fecha, remitente, destinatario, contenido, estado] ->
+      %Mensaje{id: id, fecha: fecha, remitente: remitente, destinatario: destinatario, contenido: contenido, estado: estado}
+    end)
+    |> Map.new(fn m -> {m.id, m} end)
+  end
+
+  # albergues
+  #los documentos de las personas dentro de los albergues se estarian guardando de forma separada.
+
+  @doc "guarda los albergues en albergues.txt (reemplaza el archivo)"
+  def guardar_albergues(albergues) do
+    escribir("albergues.txt", "codigo|nombre|zona|capacidad|personas", Map.values(albergues), fn a ->
+      [a.codigo, a.nombre, a.zona, a.capacidad, Enum.join(a.personas, ",")]
+    end)
+  end
+
+  @doc "lee albergues.txt, despues devuelve un mapa `%{codigo => %Albergue{}}`"
+  def cargar_albergues do
+    leer("albergues.txt", fn [codigo, nombre, zona, capacidad, personas] ->
+      %Albergue{
+        codigo: codigo,
+        nombre: nombre,
+        zona: zona,
+        capacidad: String.to_integer(capacidad),
+        personas: MapSet.new(String.split(personas, ",", trim: true))
+      }
+    end)
+    |> Map.new(fn a -> {a.codigo, a} end)
+  end
+
   # Actividad de usuarios
 
   @doc """

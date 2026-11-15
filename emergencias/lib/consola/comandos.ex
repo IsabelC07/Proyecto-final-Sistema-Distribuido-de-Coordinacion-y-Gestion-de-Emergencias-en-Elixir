@@ -32,6 +32,18 @@ defmodule Comandos do
     {"transferir_recurso", "transferir_recurso codigo origen destino cantidad"},
     {"listar_recursos", "listar_recursos [categoria=.. zona=..]"},
     {"movimientos", "movimientos codigo_recurso"},
+    {"reportar_persona", "reportar_persona documento \"nombre\" edad zona sin_informacion|reportada|localizada"},
+    {"buscar_persona", "buscar_persona [documento=.. nombre=.. zona=.. estado=..]"},
+    {"historial_persona", "historial_persona documento"},
+    {"actualizar_persona", "actualizar_persona documento estado"},
+    {"enviar_mensaje", "enviar_mensaje documento \"mensaje\""},
+    {"listar_mensajes", "listar_mensajes documento"},
+    {"marcar_mensaje", "marcar_mensaje id_mensaje entregado|pendiente"},
+    {"registrar_albergue", "registrar_albergue codigo \"nombre\" zona capacidad"},
+    {"consultar_albergue", "consultar_albergue codigo"},
+    {"registrar_ingreso", "registrar_ingreso codigo_albergue documento"},
+    {"registrar_salida", "registrar_salida codigo_albergue documento trasladada|reunificada"},
+    {"reporte_albergues", "reporte_albergues"},
     {"recursos_criticos", "recursos_criticos"},
     {"simular_asignacion", "simular_asignacion codigo_recurso ubicacion id_necesidad1 id_necesidad2 ..."}
   ]
@@ -186,6 +198,86 @@ defmodule Comandos do
     |> listar_texto(&describir_movimiento/1, "no se tienen movimientos para el recurso #{codigo}")
   end
 
+  #familias
+  defp despachar("reportar_persona", [documento, nombre, edad, zona, estado], _usuario) do
+    if ZonasServer.existe?(zona) do
+      FamiliasServer.reportar(documento, nombre, Parser.entero(edad), zona, estado)
+    else
+      ubicacion_invalida(zona)
+    end
+  end
+
+  # si no se especifica y se escribe solo un valor, por ejemplo "buscar_persona 123" entonces se toma como
+  # si fuera "buscar_persona documento=123"
+  defp despachar("buscar_persona", palabras, _usuario) do
+    palabras = Enum.map(palabras, fn p -> if String.contains?(p, "="), do: p, else: "documento=" <> p end)
+    permitidos = %{"documento" => :documento, "nombre" => :nombre, "zona" => :zona, "estado" => :estado}
+
+    case preparar_filtros(palabras, permitidos) do
+      {:ok, filtros} ->
+        FamiliasServer.listar_personas()
+        |> Enum.filter(&cumple?(&1, filtros))
+        |> listar_texto(&Persona.describir/1, "no se tienen personas con esos datos")
+
+      error ->
+        error
+    end
+  end
+
+  defp despachar("historial_persona", [documento], _usuario) do
+    case FamiliasServer.obtener(documento) do
+      {:ok, persona} ->
+        historial = Enum.map_join(persona.historial, "\n", &Persona.describir_cambio/1)
+        {:ok, Persona.describir(persona) <> "\nAsi ha cambiado su estado:\n" <> historial}
+
+      error ->
+        error
+    end
+  end
+
+  defp despachar("actualizar_persona", [documento, estado], _usuario),
+    do: FamiliasServer.actualizar_manual(documento, estado)
+
+  defp despachar("enviar_mensaje", [documento, contenido], usuario),
+    do: FamiliasServer.enviar_mensaje(usuario, documento, contenido)
+
+  defp despachar("listar_mensajes", [documento], _usuario) do
+    FamiliasServer.mensajes_de(documento)
+    |> listar_texto(&Mensaje.describir/1, "no se tieenen mensajes para el documento #{documento}")
+  end
+
+  defp despachar("marcar_mensaje", [id, estado], _usuario),
+    do: FamiliasServer.marcar_mensaje(id, estado)
+
+  #albergues
+  defp despachar("registrar_albergue", [codigo, nombre, zona, capacidad], _usuario) do
+    cond do
+      not codigo_libre?(codigo) -> codigo_ocupado(codigo)
+      not ZonasServer.existe?(zona) -> ubicacion_invalida(zona)
+      true -> AlberguesServer.registrar(codigo, nombre, zona, Parser.entero(capacidad))
+    end
+  end
+
+  defp despachar("consultar_albergue", [codigo], _usuario) do
+    case AlberguesServer.obtener(codigo) do
+      {:ok, albergue} -> {:ok, detalle_albergue(albergue)}
+      error -> error
+    end
+  end
+
+  defp despachar("registrar_ingreso", [codigo, documento], _usuario),
+    do: AlberguesServer.ingreso(codigo, documento)
+
+  defp despachar("registrar_salida", [codigo, documento, estado], _usuario),
+    do: AlberguesServer.salida(codigo, documento, estado)
+
+  # los albergues se muestran en orden segun el mas ocupado al que lo este menos
+  defp despachar("reporte_albergues", [], _usuario) do
+    AlberguesServer.listar()
+    |> Enum.sort_by(&Albergue.porcentaje/1, :desc)
+    |> listar_texto(&Albergue.describir/1, "no se tienen albergues registrados de momento")
+  end
+
   defp despachar("recursos_criticos", [], _usuario), do: {:ok, recursos_criticos()}
 
   # crea una tarea (Task) por cada necesidad y las ejecuta todas al mismo tiempo
@@ -279,20 +371,24 @@ defmodule Comandos do
   end
 
   # Revisa si el código es de una ubicación que existe. Una ubicación puede ser una zona,
-  # un sector o un punto de atención.
-  defp ubicacion_valida?(codigo), do: ZonasServer.existe?(codigo)
+  # un sector, un punto de atención o un albergue.
+  defp ubicacion_valida?(codigo), do: ZonasServer.existe?(codigo) or AlberguesServer.existe?(codigo)
 
-  # Revisa si un código está libre, es decir, que ninguna zona, sector ni punto lo use
+  # Revisa si un código está libre, es decir, que ninguna zona, sector, punto ni albergue lo use
   defp codigo_libre?(codigo), do: not ubicacion_valida?(codigo)
 
   # Mensajes de error que se repiten en varios comandos
-  defp ubicacion_invalida(codigo), do: {:error, "no existe ninguna zona, sector o punto con el codigo #{codigo}"}
+  defp ubicacion_invalida(codigo), do: {:error, "no existe ninguna zona, sector, punto o albergue con el codigo #{codigo}"}
 
   defp codigo_ocupado(codigo), do: {:error, "el codigo #{codigo} se encuentra ocupado, debe escojerse otro"}
 
-  # Devuelve un MapSet con los códigos de la zona y de sus sectores y puntos
-  # (se recorre de forma recursiva).
-  defp ubicaciones_de(zona), do: MapSet.new(Zona.codigos(zona))
+  # Devuelve un MapSet con los códigos de la zona, de sus sectores y puntos (se recorre de
+  # forma recursiva) y también los códigos de los albergues que están en esas ubicaciones.
+  defp ubicaciones_de(zona) do
+    codigos = MapSet.new(Zona.codigos(zona))
+    albergues = for a <- AlberguesServer.listar(), MapSet.member?(codigos, a.zona), do: a.codigo
+    MapSet.union(codigos, MapSet.new(albergues))
+  end
 
   # Revisa los filtros con Parser.filtros y, si viene el filtro zona=X, lo cambia por el
   # conjunto de ubicaciones que hay dentro de X.
@@ -358,9 +454,30 @@ defmodule Comandos do
   defp resultado_simulacion(:ok), do: "se asigno"
   defp resultado_simulacion(:error), do: "no se pudo asignar"
 
+  # Une los elementos de la lista separados por comas. Si la lista está vacía
+  # devuelve "nada por ahora".
+  defp lista_o_ninguno([]), do: "nada por ahora"
+  defp lista_o_ninguno(lista), do: Enum.join(lista, ", ")
+
   # Arma una línea de texto con los datos de un movimiento del inventario, separados por |
   defp describir_movimiento({fecha, codigo, tipo, ubicacion, cantidad, detalle}),
     do: "#{fecha} | #{codigo} | #{tipo} | #{ubicacion} | #{cantidad} | #{detalle}"
+
+  # Arma el reporte de un albergue con su ocupación, las personas que están adentro,
+  # sus necesidades y los recursos que tiene guardados.
+  defp detalle_albergue(albergue) do
+    necesidades = for n <- NecesidadesServer.listar(), n.zona == albergue.codigo, do: n.id
+
+    recursos =
+      for r <- InventarioServer.listar(),
+          Recurso.disponible(r, albergue.codigo) > 0,
+          do: "#{r.codigo}: #{Recurso.disponible(r, albergue.codigo)} #{r.unidad}"
+
+    Albergue.describir(albergue) <>
+      "\npersonas adentro: #{lista_o_ninguno(Enum.to_list(albergue.personas))}" <>
+      "\nnecesidades: #{lista_o_ninguno(necesidades)}" <>
+      "\nrecursos guardados: #{lista_o_ninguno(recursos)}"
+  end
 
   # Un recurso es crítico cuando lo que hay en el inventario no alcanza para las necesidades
   # pendientes de ese tipo. Suma lo disponible por categoría, suma lo que se necesita por

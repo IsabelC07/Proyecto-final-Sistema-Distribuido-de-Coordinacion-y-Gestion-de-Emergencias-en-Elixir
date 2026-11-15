@@ -49,6 +49,25 @@ defmodule ConcurrenciaTest do
 
 
 
+  # 10 personas a la vez intentan entrar a un albergue de capacidad 3, solo 3 entran y la ocupacion no pasa la capacidad que tiene.
+  test "un albergue no supera su capacidad con ingresos simultaneos" do
+    {:ok, _} = AlberguesServer.registrar("AC4", "Albergue prueba", "zona_c4", 3)
+    documentos = for n <- 1..10, do: "doc_c4_#{n}"
+
+    Enum.each(documentos, fn documento ->
+      {:ok, _} = FamiliasServer.reportar(documento, "Persona #{documento}", 30, "zona_c4", "localizada")
+    end)
+
+    resultados =
+      documentos
+      |> Enum.map(fn documento -> Task.async(fn -> AlberguesServer.ingreso("AC4", documento) end) end)
+      |> Enum.map(&Task.await/1)
+
+    assert Enum.count(resultados, &match?({:ok, _}, &1)) == 3
+    {:ok, albergue} = AlberguesServer.obtener("AC4")
+    assert Albergue.ocupacion(albergue) == 3
+  end
+
   # lanza una tarea por cada id, todas al tiempo, y espera todas las respuestas
   defp al_mismo_tiempo(ids, codigo, ubicacion) do
     ids
