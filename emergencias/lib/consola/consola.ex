@@ -28,6 +28,8 @@ defmodule Consola do
 
     case Comandos.ejecutar(linea, usuario) do
       :salir ->
+        # Antes de cerrar, espera a que la bitacora guarde la actividad que le falta
+        Bitacora.terminar_pendientes()
         Util.mostrar_mensaje("cerrar sesion, vuelva pronto, este programa siempre estara a su disposicion.")
 
       {nuevo_usuario, {:ok, texto}} ->

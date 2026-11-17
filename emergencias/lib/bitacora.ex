@@ -52,6 +52,27 @@ defmodule Bitacora do
       {:registrar, usuario, accion, resultado} ->
         Persistencia.registrar_actividad(usuario, accion, resultado)
         esperar_mensajes()
+
+      # Los mensajes se atienden en orden: si ya llego a este, ya guardo todos los anteriores
+      {:terminar_pendientes, quien} ->
+        send(quien, :listo)
+        esperar_mensajes()
+    end
+  end
+
+  @doc """
+  Espera a que la bitácora termine de guardar todas las actividades que tiene pendientes.
+
+  Se usa antes de cerrar el programa, para que no se pierda la actividad de los
+  últimos comandos. Si la bitácora no responde en 5 segundos, sigue de todas formas.
+  """
+  def terminar_pendientes do
+    send(@nombre, {:terminar_pendientes, self()})
+
+    receive do
+      :listo -> :ok
+    after
+      5000 -> :ok
     end
   end
 end

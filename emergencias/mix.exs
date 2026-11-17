@@ -9,7 +9,7 @@ defmodule Emergencias.MixProject do
   def project do
     [
       app: :emergencias,
-      version: "0.1.0-beta.1",
+      version: "0.1.0",
       elixir: "~> 1.15",
       description: "el sistema de coordinacion y las gestiones de emergencias",
       start_permanent: Mix.env() == :prod,
